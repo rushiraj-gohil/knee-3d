@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <b><a href="https://YOUR-PROJECT.vercel.app">▶ Live demo</a></b> · works on phone and laptop · no install
+  <b><a href="https://knee-3d.vercel.app/">▶ Live demo</a></b> · works on phone and laptop · no install
 </p>
 
 ---
