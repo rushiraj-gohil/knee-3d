@@ -1,0 +1,122 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Knee MRI 3D</title>
+<style>
+:root{--bg:#0b0c0e;--panel:#15171b;--text:#e7e9ee;--muted:#8a909c;--accent:#6aa9ff;--line:#262a31}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,system-ui,sans-serif}
+#wrap{display:flex;height:100%}
+canvas{flex:1;min-width:0;min-height:0;display:block;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
+aside{width:290px;padding:18px 16px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
+h1{font-size:16px;margin:0 0 4px}p.sub{color:var(--muted);margin:0 0 12px;font-size:12px}
+label{display:block;margin:14px 0 4px;color:var(--muted);font-size:12px}label b{float:right;color:var(--text);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.seg{display:flex;gap:4px;margin-top:4px}.seg button{flex:1;padding:6px 4px;border:1px solid var(--line);background:transparent;color:var(--text);border-radius:6px;cursor:pointer;font:inherit;font-size:12px}
+.seg button.on{background:var(--accent);color:#000;border-color:var(--accent)}
+.chk{display:flex;gap:12px;margin-top:6px;font-size:13px}.chk span{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px}
+.grp{display:none}.grp.show{display:block}
+.note{margin-top:20px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+@media(max-width:700px){#wrap{flex-direction:column}aside{width:auto;max-height:48%;border-left:0;border-top:1px solid var(--line)}}
+</style></head><body><div id="wrap"><canvas id="c"></canvas><aside>
+<h1>Knee MRI – 3D</h1><p class="sub">Drag to rotate · scroll / pinch to zoom</p>
+<label>View</label><div class="seg" id="mode"><button data-v="2" class="on">Bones</button><button data-v="0">Tissue</button><button data-v="1">X-ray</button></div>
+<div class="grp show" id="g-bones">
+ <div class="chk"><label style="margin:0;color:var(--text)"><input type="checkbox" id="bf" checked><span style="background:#e9d8c4"></span>Femur</label>
+ <label style="margin:0;color:var(--text)"><input type="checkbox" id="bt" checked><span style="background:#d9c6a8"></span>Tibia</label>
+ <label style="margin:0;color:var(--text)"><input type="checkbox" id="bp" checked><span style="background:#8fb8e8"></span>Patella</label></div>
+ <label>Skin ghost <b id="ghv"></b></label><input id="gh" type="range" min="0" max="1" step="0.01" value="0.35">
+</div>
+<div class="grp" id="g-tis">
+ <label>Series</label><div class="seg" id="series"><button data-v="pd" class="on">PD</button><button data-v="pdfs">PD fat-sat</button></div>
+ <label>Threshold <b id="thv"></b></label><input id="th" type="range" min="0" max="1" step="0.01" value="0.30">
+ <label>Opacity <b id="opv"></b></label><input id="op" type="range" min="0.05" max="1" step="0.01" value="0.55">
+</div>
+<label>Cut side → side <b id="cxv"></b></label><input id="cx" type="range" min="0" max="0.95" step="0.01" value="0">
+<label>Cut front → back <b id="cyv"></b></label><input id="cy" type="range" min="0" max="0.95" step="0.01" value="0">
+<label>Cut top → bottom <b id="czv"></b></label><input id="cz" type="range" min="0" max="0.95" step="0.01" value="0">
+<div class="note">Bones fused from three printed film series: sagittal (16 slices), coronal (16) and axial (16), aligned to each other automatically. Each point is bone only where the series covering it agree. Built from film prints, not raw DICOM, so surfaces are approximate. For visualisation only, not diagnosis.</div>
+</aside></div>
+<script>const VOL=__VOL__;</script>
+<script>
+const cv=document.getElementById('c'),gl=cv.getContext('webgl2');
+if(!gl)document.body.innerHTML='<p style="padding:20px">WebGL2 is not supported in this browser.</p>';
+function b64(s){const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
+gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+function mk(data,w,h,d,fmt,ifmt){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_3D,t);
+ gl.texImage3D(gl.TEXTURE_3D,0,ifmt,w,h,d,0,fmt,gl.UNSIGNED_BYTE,b64(data));
+ for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER])gl.texParameteri(gl.TEXTURE_3D,p,gl.LINEAR);
+ for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.CLAMP_TO_EDGE);return t;}
+const tex={pd:mk(VOL.pd,VOL.w,VOL.h,VOL.d,gl.RED,gl.R8),pdfs:mk(VOL.pdfs,VOL.w,VOL.h,VOL.d,gl.RED,gl.R8),bones:mk(VOL.bones,VOL.bw,VOL.bh,VOL.bd,gl.RGBA,gl.RGBA8)};
+const vs=`#version 300 es
+in vec2 p;out vec2 uv;void main(){uv=p;gl_Position=vec4(p,0,1);}`;
+const fs=`#version 300 es
+precision highp float;precision highp sampler3D;
+in vec2 uv;out vec4 o;uniform sampler3D V;uniform vec3 eye,fw,rt,up,box,cut,show;uniform float asp,th,op,mode,ct,ghost;uniform vec3 E;
+const vec3 BG=vec3(.043,.047,.055);
+vec2 hit(vec3 ro,vec3 rd,vec3 lo,vec3 hi){vec3 a=(lo-ro)/rd,b=(hi-ro)/rd;vec3 n=min(a,b),f=max(a,b);return vec2(max(max(n.x,n.y),n.z),min(min(f.x,f.y),f.z));}
+vec3 Q(vec3 pp){vec3 q=pp/box+.5;return vec3(q.x,1.-q.y,q.z);}
+float sv(vec3 q){return texture(V,q).r;}
+float sb(vec3 q){vec4 t=texture(V,q);return max(max(t.r*show.x,t.g*show.y),t.b*show.z);}
+void main(){vec3 rd=normalize(fw*1.8+rt*uv.x*asp+up*uv.y);vec3 hb=box*.5;
+ vec3 lo=-hb+cut*box;vec3 hi=hb;hi.y-=ct*box.y;vec2 t=hit(eye,rd,lo,hi);
+ if(t.x>t.y||t.y<0.){o=vec4(BG,1);return;}
+ t.x=max(t.x,0.);float dt=.0035;vec4 acc=vec4(0);float mx=0.;vec3 L=normalize(-fw+up*.7+rt*.5);
+ vec3 e=E;
+ float prevB=0.;
+ for(int i=0;i<900;i++){float tt=t.x+float(i)*dt;if(tt>t.y)break;vec3 q=Q(eye+rd*tt);
+  if(mode>1.5){
+   vec4 s=texture(V,q);float b=max(max(s.r*show.x,s.g*show.y),s.b*show.z);
+   if(b>.5){
+    vec3 g=vec3(sb(q+vec3(e.x,0,0))-sb(q-vec3(e.x,0,0)),-(sb(q+vec3(0,e.y,0))-sb(q-vec3(0,e.y,0))),sb(q+vec3(0,0,e.z))-sb(q-vec3(0,0,e.z)));
+    vec3 n=length(g)>1e-5?-normalize(g):-rd; if(dot(n,rd)>0.)n=-n;
+    vec3 col=s.b*show.z>=b-.001?vec3(.56,.72,.91):(s.g*show.y>=b-.001?vec3(.85,.78,.66):vec3(.92,.85,.77));
+    float d=max(dot(n,L),0.),f=max(dot(n,-rd),0.);
+    vec3 c=col*(.28+.8*d)+vec3(1)*pow(max(dot(reflect(-L,n),-rd),0.),24.)*.18+col*.12*(1.-f);
+    if(i==0||tt-t.x<dt*1.5)c=col*.7;
+    acc.rgb+=(1.-acc.a)*c;acc.a=1.;break;}
+   float gx=length(vec2(texture(V,q+vec3(e.x,0,0)).a-texture(V,q-vec3(e.x,0,0)).a,texture(V,q+vec3(0,e.y,0)).a-texture(V,q-vec3(0,e.y,0)).a));
+   float a=ghost*.06*smoothstep(.08,.35,gx)*smoothstep(.05,.2,s.a);
+   acc.rgb+=(1.-acc.a)*a*vec3(.62,.72,.85);acc.a+=(1.-acc.a)*a;continue;}
+  float v=sv(q);
+  if(mode>.5){mx=max(mx,v);continue;}
+  float a=smoothstep(th,th+.12,v)*op*.35;if(a<.002)continue;
+  vec3 g=vec3(sv(q+vec3(e.x,0,0))-sv(q-vec3(e.x,0,0)),-(sv(q+vec3(0,e.y,0))-sv(q-vec3(0,e.y,0))),sv(q+vec3(0,0,e.z))-sv(q-vec3(0,0,e.z)));
+  float gm=length(g);vec3 n=gm>1e-4?-g/gm:-rd;float dif=abs(dot(n,L));
+  vec3 c=mix(vec3(.55,.42,.36),vec3(1.,.95,.88),v)*(.35+.75*dif);
+  acc.rgb+=(1.-acc.a)*a*c;acc.a+=(1.-acc.a)*a;if(acc.a>.97)break;}
+ if(mode>.5&&mode<1.5){float m=smoothstep(th*.6,1.,mx);o=vec4(mix(BG,vec3(1),m),1);return;}
+ o=vec4(acc.rgb+BG*(1.-acc.a),1);}`.replace(/\$\{W\}/g,VOL.w).replace(/\$\{H\}/g,VOL.h).replace(/\$\{D\}/g,VOL.d);
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(x));return x;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);gl.useProgram(pr);
+gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+const loc=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+const U=n=>gl.getUniformLocation(pr,n),$=id=>document.getElementById(id);
+const st={series:'pd',mode:2,yaw:-0.9,pitch:0.12,dist:1.75};
+function segs(id,key){$(id).onclick=e=>{const b=e.target.closest('button');if(!b)return;[...$(id).children].forEach(x=>x.classList.toggle('on',x===b));
+ st[key]=key==='mode'?+b.dataset.v:b.dataset.v;$('g-bones').classList.toggle('show',st.mode===2);$('g-tis').classList.toggle('show',st.mode!==2);draw();};}
+segs('series','series');segs('mode','mode');
+const R=['th','op','cx','cy','cz','gh'];R.forEach(k=>$(k).oninput=draw);['bf','bt','bp'].forEach(k=>$(k).onchange=draw);
+const ptr=new Map();let pinch=0;
+cv.onpointerdown=e=>{ptr.set(e.pointerId,[e.clientX,e.clientY]);cv.setPointerCapture(e.pointerId);};
+cv.onpointermove=e=>{if(!ptr.has(e.pointerId))return;const p=ptr.get(e.pointerId);
+ if(ptr.size===2){const o=[...ptr.entries()].find(([k])=>k!==e.pointerId)[1];const d0=Math.hypot(p[0]-o[0],p[1]-o[1]),d1=Math.hypot(e.clientX-o[0],e.clientY-o[1]);if(d0>0)st.dist=Math.max(.9,Math.min(5,st.dist*d0/d1));}
+ else{st.yaw-=(e.clientX-p[0])*.008;st.pitch=Math.max(-1.5,Math.min(1.5,st.pitch+(e.clientY-p[1])*.008));}
+ ptr.set(e.pointerId,[e.clientX,e.clientY]);draw();};
+cv.onpointerup=cv.onpointercancel=e=>ptr.delete(e.pointerId);
+cv.addEventListener('wheel',e=>{e.preventDefault();st.dist=Math.max(.9,Math.min(5,st.dist*(1+e.deltaY*.001)));draw();},{passive:false});
+let raf=0;function draw(){if(!raf)raf=requestAnimationFrame(render);}
+function render(){raf=0;const dpr=Math.min(devicePixelRatio,1.5),w=cv.clientWidth*dpr|0,h=cv.clientHeight*dpr|0;
+ if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}gl.viewport(0,0,w,h);
+ R.forEach(k=>$(k+'v').textContent=(+$(k).value).toFixed(2));
+ const c=Math.cos(st.pitch),eye=[Math.sin(st.yaw)*c*st.dist,Math.sin(st.pitch)*st.dist,Math.cos(st.yaw)*c*st.dist];
+ const n=v=>{const l=Math.hypot(...v);return v.map(x=>x/l)},cr=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+ const fw=n(eye.map(x=>-x)),rt=n(cr(fw,[0,1,0])),up=cr(rt,fw);
+ const bones=st.mode===2;
+ gl.uniform3fv(U('box'),bones?VOL.boxB:VOL.boxT);
+ gl.uniform3fv(U('E'),bones?[1.2/VOL.bw,1.2/VOL.bh,1.2/VOL.bd]:[1.5/VOL.w,1.5/VOL.h,.6/VOL.d]);gl.uniform3fv(U('cut'),[+$('cy').value,0,+$('cx').value]);gl.uniform1f(U('ct'),+$('cz').value);
+ gl.uniform3fv(U('show'),[$('bf').checked?1:0,$('bt').checked?1:0,$('bp').checked?1:0]);gl.uniform1f(U('ghost'),+$('gh').value);
+ gl.uniform3fv(U('eye'),eye);gl.uniform3fv(U('fw'),fw);gl.uniform3fv(U('rt'),rt);gl.uniform3fv(U('up'),up);
+ gl.uniform1f(U('asp'),w/h);gl.uniform1f(U('th'),+$('th').value);gl.uniform1f(U('op'),+$('op').value);gl.uniform1f(U('mode'),st.mode);
+ gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_3D,bones?tex.bones:tex[st.series]);gl.uniform1i(U('V'),0);
+ gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+addEventListener('resize',draw);draw();
+</script></body></html>

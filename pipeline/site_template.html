@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0b0c0e">
+<title>Knee MRI 3D</title>
+<meta name="description" content="Interactive 3D knee model reconstructed from MRI film slices.">
+<style>
+:root{--bg:#0b0c0e;--panel:#15171b;--text:#e7e9ee;--muted:#8a909c;--accent:#6aa9ff;--line:#262a31;
+ --sb:env(safe-area-inset-bottom,0px);--st:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,system-ui,sans-serif;overscroll-behavior:none;overflow:hidden}
+#wrap{display:flex;height:100vh;height:100dvh}
+#stage{position:relative;flex:1;min-width:0;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
+.top{position:absolute;top:calc(12px + var(--st));left:12px;right:12px;display:flex;flex-direction:column;align-items:flex-start;gap:10px;z-index:2;pointer-events:none}
+.top>*{pointer-events:auto}
+#greet{align-self:center;max-width:100%;text-align:center;font-size:18px;font-weight:600;line-height:1.3;padding:8px 16px;border-radius:14px;background:rgba(21,23,27,.75);border:1px solid var(--line);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);text-wrap:balance}
+.fab{display:flex;gap:8px}
+@media (max-width:760px){#greet{font-size:16px}}
+.fab button{height:36px;padding:0 12px;border-radius:18px;border:1px solid var(--line);background:rgba(21,23,27,.85);color:var(--text);font:inherit;font-size:13px;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#hint{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);color:var(--muted);font-size:12px;pointer-events:none;transition:opacity .6s;white-space:nowrap}
+#load{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--muted);z-index:3;background:var(--bg)}
+#load .bar{width:180px;height:4px;border-radius:2px;background:var(--line);overflow:hidden}#load .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+aside{width:300px;padding:18px 16px;background:var(--panel);border-left:1px solid var(--line);overflow:auto}
+.head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:16px;margin:0}p.sub{color:var(--muted);margin:4px 0 12px;font-size:12px}
+#toggle{display:none}
+label{display:block;margin:14px 0 6px;color:var(--muted);font-size:12px}label b{float:right;color:var(--text);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--accent);height:24px;margin:0}
+.seg{display:flex;gap:4px}.seg button{flex:1;min-height:36px;padding:6px 4px;border:1px solid var(--line);background:transparent;color:var(--text);border-radius:8px;cursor:pointer;font:inherit;font-size:13px}
+.seg button.on{background:var(--accent);color:#000;border-color:var(--accent)}
+.chk{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chk label{margin:0;display:flex;align-items:center;gap:6px;color:var(--text);font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:18px;cursor:pointer}
+.chk input{margin:0;accent-color:var(--accent)}.chk span{width:10px;height:10px;border-radius:2px}
+.grp{display:none}.grp.show{display:block}
+.note{margin-top:20px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px}
+@media (max-width:760px){
+ #wrap{flex-direction:column}
+ aside{flex:none;width:auto;border-left:0;border-top:1px solid var(--line);border-radius:16px 16px 0 0;margin-top:-16px;
+  padding:10px 16px calc(14px + var(--sb));max-height:52dvh;z-index:4;box-shadow:0 -8px 24px rgba(0,0,0,.4)}
+ aside::before{content:"";display:block;width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 10px}
+ aside.collapsed{overflow:hidden}
+ aside.collapsed .more{display:none}
+ #toggle{display:inline-flex;align-items:center;height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--line);background:transparent;color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+ p.sub{display:none}
+ .first{margin-top:10px}
+ #hint{bottom:28px}
+}
+</style></head><body><div id="wrap">
+<div id="stage"><canvas id="c"></canvas>
+ <div class="top"><div id="greet">Hi!! I am Rushiraj's right knee. Nice to meet you.</div><div class="fab"><button id="reset">Reset view</button></div></div>
+ <div id="hint">Drag to rotate · pinch or scroll to zoom</div>
+ <div id="load"><div>Loading scan data…</div><div class="bar"><i id="pg"></i></div></div>
+</div>
+<aside id="panel" class="collapsed">
+ <div class="head"><h1>Knee MRI – 3D</h1><button id="toggle" aria-expanded="false">Controls</button></div>
+ <p class="sub">Drag to rotate · scroll / pinch to zoom</p>
+ <div class="seg first" id="mode"><button data-v="2" class="on">Bones</button><button data-v="0">Tissue</button><button data-v="1">X-ray</button></div>
+ <div class="grp show" id="g-bones">
+  <div class="chk"><label><input type="checkbox" id="bf" checked><span style="background:#e9d8c4"></span>Femur</label>
+  <label><input type="checkbox" id="bt" checked><span style="background:#d9c6a8"></span>Tibia</label>
+  <label><input type="checkbox" id="bp" checked><span style="background:#8fb8e8"></span>Patella</label></div>
+ </div>
+ <div class="more">
+  <div class="grp show" id="g-bones2"><label>Skin ghost <b id="ghv"></b></label><input id="gh" type="range" min="0" max="1" step="0.01" value="0.35"></div>
+  <div class="grp" id="g-tis">
+   <label>Series</label><div class="seg" id="series"><button data-v="pd" class="on">PD</button><button data-v="pdfs">PD fat-sat</button></div>
+   <label>Threshold <b id="thv"></b></label><input id="th" type="range" min="0" max="1" step="0.01" value="0.30">
+   <label>Opacity <b id="opv"></b></label><input id="op" type="range" min="0.05" max="1" step="0.01" value="0.55">
+  </div>
+  <label>Cut side → side <b id="cxv"></b></label><input id="cx" type="range" min="0" max="0.95" step="0.01" value="0">
+  <label>Cut front → back <b id="cyv"></b></label><input id="cy" type="range" min="0" max="0.95" step="0.01" value="0">
+  <label>Cut top → bottom <b id="czv"></b></label><input id="cz" type="range" min="0" max="0.95" step="0.01" value="0">
+  <div class="note">Bones fused from three printed MRI film series: sagittal, coronal and axial (16 slices each), aligned to each other automatically. Each point counts as bone only where the series covering it agree. Built from film prints, not raw DICOM, so surfaces are approximate. For visualisation only, not diagnosis.</div>
+ </div>
+</aside></div>
+<script>
+const $=id=>document.getElementById(id),cv=$('c'),gl=cv.getContext('webgl2',{antialias:false,powerPreference:'high-performance'});
+const MOBILE=matchMedia('(max-width:760px)').matches||matchMedia('(pointer:coarse)').matches;
+if(!gl||typeof DecompressionStream==='undefined'){$('load').innerHTML='<p style="padding:20px;text-align:center">This viewer needs WebGL2.<br>Try a recent Chrome, Safari (iOS 16.4+) or Firefox.</p>';throw 0;}
+
+// --- panel (bottom sheet on phones) ---
+const panel=$('panel');
+function setSheet(open){panel.classList.toggle('collapsed',!open);$('toggle').textContent=open?'Done':'Controls';$('toggle').setAttribute('aria-expanded',open);}
+$('toggle').onclick=()=>setSheet(panel.classList.contains('collapsed'));
+if(!MOBILE)panel.classList.remove('collapsed');
+
+// --- data loading with progress ---
+let fetchBin=async function(url,onp){const r=await fetch(url);if(!r.ok)throw new Error(url+' '+r.status);
+ const len=+r.headers.get('content-length')||0;if(!r.body||!len){const b=new Uint8Array(await r.arrayBuffer());onp(1);return gunzip(b);}
+ const rd=r.body.getReader(),parts=[];let got=0;
+ for(;;){const{done,value}=await rd.read();if(done)break;parts.push(value);got+=value.length;onp(Math.min(got/len,1));}
+ const out=new Uint8Array(got);let o=0;for(const p of parts){out.set(p,o);o+=p.length;}return gunzip(out);}
+// files are gzip'd (lossless); skip if the server already decoded them
+async function gunzip(b){if(b[0]!==0x1f||b[1]!==0x8b)return b;
+ return new Uint8Array(await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());}
+
+let VOL,tex={};
+function mk(data,w,h,d,fmt,ifmt){const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_3D,t);gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+ gl.texImage3D(gl.TEXTURE_3D,0,ifmt,w,h,d,0,fmt,gl.UNSIGNED_BYTE,data);
+ for(const p of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER])gl.texParameteri(gl.TEXTURE_3D,p,gl.LINEAR);
+ for(const p of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,p,gl.CLAMP_TO_EDGE);return t;}
+
+// --- shader ---
+const vs=`#version 300 es
+in vec2 p;out vec2 uv;void main(){uv=p;gl_Position=vec4(p,0,1);}`;
+const fs=`#version 300 es
+precision highp float;precision highp sampler3D;
+in vec2 uv;out vec4 o;uniform sampler3D V;uniform vec3 eye,fw,rt,up,box,cut,show,E;uniform float asp,th,op,mode,ct,ghost,dt;
+const vec3 BG=vec3(.043,.047,.055);
+vec2 hit(vec3 ro,vec3 rd,vec3 lo,vec3 hi){vec3 a=(lo-ro)/rd,b=(hi-ro)/rd;vec3 n=min(a,b),f=max(a,b);return vec2(max(max(n.x,n.y),n.z),min(min(f.x,f.y),f.z));}
+vec3 Q(vec3 pp){vec3 q=pp/box+.5;return vec3(q.x,1.-q.y,q.z);}
+float sv(vec3 q){return texture(V,q).r;}
+float sb(vec3 q){vec4 t=texture(V,q);return max(max(t.r*show.x,t.g*show.y),t.b*show.z);}
+void main(){vec3 rd=normalize(fw*1.8+rt*uv.x*asp+up*uv.y);vec3 hb=box*.5;
+ vec3 lo=-hb+cut*box;vec3 hi=hb;hi.y-=ct*box.y;vec2 t=hit(eye,rd,lo,hi);
+ if(t.x>t.y||t.y<0.){o=vec4(BG,1);return;}
+ t.x=max(t.x,0.);vec4 acc=vec4(0);float mx=0.;vec3 L=normalize(-fw+up*.7+rt*.5);vec3 e=E;
+ for(int i=0;i<900;i++){float tt=t.x+float(i)*dt;if(tt>t.y)break;vec3 q=Q(eye+rd*tt);
+  if(mode>1.5){
+   vec4 s=texture(V,q);float b=max(max(s.r*show.x,s.g*show.y),s.b*show.z);
+   if(b>.5){
+    vec3 g=vec3(sb(q+vec3(e.x,0,0))-sb(q-vec3(e.x,0,0)),-(sb(q+vec3(0,e.y,0))-sb(q-vec3(0,e.y,0))),sb(q+vec3(0,0,e.z))-sb(q-vec3(0,0,e.z)));
+    vec3 n=length(g)>1e-5?-normalize(g):-rd; if(dot(n,rd)>0.)n=-n;
+    vec3 col=s.b*show.z>=b-.001?vec3(.56,.72,.91):(s.g*show.y>=b-.001?vec3(.85,.78,.66):vec3(.92,.85,.77));
+    float d=max(dot(n,L),0.),f=max(dot(n,-rd),0.);
+    vec3 c=col*(.28+.8*d)+vec3(1)*pow(max(dot(reflect(-L,n),-rd),0.),24.)*.18+col*.12*(1.-f);
+    if(tt-t.x<dt*1.5)c=col*.7;
+    acc.rgb+=(1.-acc.a)*c;acc.a=1.;break;}
+   float gx=length(vec2(texture(V,q+vec3(e.x,0,0)).a-texture(V,q-vec3(e.x,0,0)).a,texture(V,q+vec3(0,e.y,0)).a-texture(V,q-vec3(0,e.y,0)).a));
+   float a=ghost*.06*(dt/.0035)*smoothstep(.08,.35,gx)*smoothstep(.05,.2,s.a);
+   acc.rgb+=(1.-acc.a)*a*vec3(.62,.72,.85);acc.a+=(1.-acc.a)*a;continue;}
+  float v=sv(q);
+  if(mode>.5){mx=max(mx,v);continue;}
+  float a=smoothstep(th,th+.12,v)*op*.35*(dt/.0035);if(a<.002)continue;
+  vec3 g=vec3(sv(q+vec3(e.x,0,0))-sv(q-vec3(e.x,0,0)),-(sv(q+vec3(0,e.y,0))-sv(q-vec3(0,e.y,0))),sv(q+vec3(0,0,e.z))-sv(q-vec3(0,0,e.z)));
+  float gm=length(g);vec3 n=gm>1e-4?-g/gm:-rd;float dif=abs(dot(n,L));
+  vec3 c=mix(vec3(.55,.42,.36),vec3(1.,.95,.88),v)*(.35+.75*dif);
+  acc.rgb+=(1.-acc.a)*a*c;acc.a+=(1.-acc.a)*a;if(acc.a>.97)break;}
+ if(mode>.5&&mode<1.5){float m=smoothstep(th*.6,1.,mx);o=vec4(mix(BG,vec3(1),m),1);return;}
+ o=vec4(acc.rgb+BG*(1.-acc.a),1);}`;
+function sh(t,s){const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);if(!gl.getShaderParameter(x,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(x));return x;}
+const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,vs));gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(pr);gl.useProgram(pr);
+gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+const loc=gl.getAttribLocation(pr,'p');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+const U={};const u=n=>U[n]||(U[n]=gl.getUniformLocation(pr,n));
+
+// --- state & interaction ---
+const st={series:'pd',mode:2,yaw:-0.9,pitch:0.12,dist:1.75};
+function homeView(){const a=cv.clientWidth/Math.max(cv.clientHeight,1);st.yaw=-0.9;st.pitch=0.12;st.dist=a<0.8?2.05:1.75;}
+function segs(id,key){$(id).onclick=e=>{const b=e.target.closest('button');if(!b)return;[...$(id).children].forEach(x=>x.classList.toggle('on',x===b));
+ st[key]=key==='mode'?+b.dataset.v:b.dataset.v;const bo=st.mode===2;
+ $('g-bones').classList.toggle('show',bo);$('g-bones2').classList.toggle('show',bo);$('g-tis').classList.toggle('show',!bo);draw(true);};}
+segs('series','series');segs('mode','mode');
+const R=['th','op','cx','cy','cz','gh'];
+R.forEach(k=>$(k).addEventListener('input',()=>draw(false)));R.forEach(k=>$(k).addEventListener('change',()=>draw(true)));
+['bf','bt','bp'].forEach(k=>$(k).onchange=()=>draw(true));
+$('reset').onclick=()=>{homeView();draw(true);};
+
+const ptr=new Map();let lastTap=0;
+function hideHint(){$('hint').style.opacity=0;}
+cv.addEventListener('pointerdown',e=>{ptr.set(e.pointerId,[e.clientX,e.clientY]);cv.setPointerCapture(e.pointerId);hideHint();
+ if(MOBILE&&!panel.classList.contains('collapsed'))setSheet(false);
+ const now=performance.now();if(e.pointerType==='touch'&&ptr.size===1&&now-lastTap<300){homeView();draw(true);}lastTap=now;});
+cv.addEventListener('pointermove',e=>{if(!ptr.has(e.pointerId))return;const p=ptr.get(e.pointerId);
+ if(ptr.size===2){const o=[...ptr.entries()].find(([k])=>k!==e.pointerId)[1];const d0=Math.hypot(p[0]-o[0],p[1]-o[1]),d1=Math.hypot(e.clientX-o[0],e.clientY-o[1]);if(d0>0&&d1>0)st.dist=Math.max(.9,Math.min(5,st.dist*d0/d1));}
+ else if(ptr.size===1){st.yaw-=(e.clientX-p[0])*.008;st.pitch=Math.max(-1.5,Math.min(1.5,st.pitch+(e.clientY-p[1])*.008));}
+ ptr.set(e.pointerId,[e.clientX,e.clientY]);draw(false);});
+const up_=e=>{ptr.delete(e.pointerId);if(!ptr.size)draw(true);};
+cv.addEventListener('pointerup',up_);cv.addEventListener('pointercancel',up_);
+cv.addEventListener('wheel',e=>{e.preventDefault();hideHint();st.dist=Math.max(.9,Math.min(5,st.dist*(1+e.deltaY*.001)));draw(false);},{passive:false});
+document.addEventListener('gesturestart',e=>e.preventDefault()); // stop iOS page zoom
+
+// --- adaptive-quality rendering: cheap while moving, sharp when idle ---
+let raf=0,hq=true,idleT=0;
+function draw(final){hq=!!final;clearTimeout(idleT);if(!final)idleT=setTimeout(()=>draw(true),160);if(!raf)raf=requestAnimationFrame(render);}
+function render(){raf=0;if(!VOL)return;
+ const dpr=devicePixelRatio||1,scale=hq?Math.min(dpr,2):(MOBILE?0.6:Math.min(dpr,1)*0.75);
+ const w=Math.max(1,cv.clientWidth*scale|0),h=Math.max(1,cv.clientHeight*scale|0);
+ if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}gl.viewport(0,0,w,h);
+ R.forEach(k=>$(k+'v').textContent=(+$(k).value).toFixed(2));
+ const c=Math.cos(st.pitch),eye=[Math.sin(st.yaw)*c*st.dist,Math.sin(st.pitch)*st.dist,Math.cos(st.yaw)*c*st.dist];
+ const n=v=>{const l=Math.hypot(...v);return v.map(x=>x/l)},cr=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+ const fw=n(eye.map(x=>-x)),rt=n(cr(fw,[0,1,0])),upv=cr(rt,fw),bones=st.mode===2;
+ gl.uniform3fv(u('box'),bones?VOL.boxB:VOL.boxT);
+ gl.uniform3fv(u('E'),bones?[1.2/VOL.bw,1.2/VOL.bh,1.2/VOL.bd]:[1.5/VOL.w,1.5/VOL.h,.6/VOL.d]);
+ gl.uniform3fv(u('cut'),[+$('cy').value,0,+$('cx').value]);gl.uniform1f(u('ct'),+$('cz').value);
+ gl.uniform3fv(u('show'),[$('bf').checked?1:0,$('bt').checked?1:0,$('bp').checked?1:0]);gl.uniform1f(u('ghost'),+$('gh').value);
+ gl.uniform3fv(u('eye'),eye);gl.uniform3fv(u('fw'),fw);gl.uniform3fv(u('rt'),rt);gl.uniform3fv(u('up'),upv);
+ gl.uniform1f(u('asp'),w/h);gl.uniform1f(u('th'),+$('th').value);gl.uniform1f(u('op'),+$('op').value);gl.uniform1f(u('mode'),st.mode);
+ gl.uniform1f(u('dt'),hq?.0035:(MOBILE?.007:.005));
+ gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_3D,bones?tex.bones:tex[st.series]);gl.uniform1i(u('V'),0);
+ gl.drawArrays(gl.TRIANGLE_STRIP,0,4);}
+new ResizeObserver(()=>draw(true)).observe(cv);
+cv.addEventListener('webglcontextlost',e=>{e.preventDefault();$('load').style.display='flex';$('load').firstElementChild.textContent='Graphics reset, reload the page.';});
+
+// --- boot: bones first so the default view appears fast ---
+(async()=>{try{
+ const EM=window.EMBED;
+ if(EM){const b64=x=>Uint8Array.from(atob(x),c=>c.charCodeAt(0));fetchBin=async(url,onp)=>{onp(1);return gunzip(b64(EM[url.split('/').pop().split('.')[0]]));};}
+ VOL=EM?EM.meta:await (await fetch('data/meta.json')).json();
+ const prog={b:0,p:0,f:0},upd=()=>$('pg').style.width=(prog.b*70+prog.p*15+prog.f*15)+'%';
+ const bones=await fetchBin('data/bones.bin.gz',x=>{prog.b=x;upd();});
+ tex.bones=mk(bones,VOL.bw,VOL.bh,VOL.bd,gl.RGBA,gl.RGBA8);
+ homeView();$('load').style.display='none';draw(true);
+ const [pd,pdfs]=await Promise.all([fetchBin('data/pd.bin.gz',x=>{prog.p=x;upd();}),fetchBin('data/pdfs.bin.gz',x=>{prog.f=x;upd();})]);
+ tex.pd=mk(pd,VOL.w,VOL.h,VOL.d,gl.RED,gl.R8);tex.pdfs=mk(pdfs,VOL.w,VOL.h,VOL.d,gl.RED,gl.R8);
+}catch(err){$('load').style.display='flex';$('load').firstElementChild.textContent='Could not load scan data ('+err.message+').';console.error(err);}})();
+</script></body></html>
