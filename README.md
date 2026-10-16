@@ -1,4 +1,4 @@
-# 🦵 knee-mri-3d
+# knee-mri-3d
 
 **I got a knee MRI. The clinic gave me a 3-page PDF of printed film. I turned it into an interactive 3D model of my knee.**
 
